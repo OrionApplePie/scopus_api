@@ -3,8 +3,10 @@ from datetime import datetime
 import pandas as pd
 import pytz
 import requests
+from requests.compat import urljoin
 from bs4 import BeautifulSoup
 from lxml import html
+
 
 REQUEST_HEADERS = {
     "User-Agent": (
@@ -18,6 +20,7 @@ SCOPUS_API_SEARCH_URL = "https://api.elsevier.com/content/search/scopus"
 
 SJR_BASE_URL = "https://www.scimagojr.com/"
 
+CROSSREF_WORKS_API = "https://api.crossref.org/works/"
 
 def load_filter_phrases(filename="") -> list:
     """Загрузка фраз для фильтрации по тексту о финансировании."""
@@ -59,6 +62,7 @@ def fetch_query(scopus_query: str, api_key: str) -> requests.Response:
         "query": scopus_query,
         # 'cursor': '"*"',
         "apiKey": api_key,
+        # "view": "complete",  # не доступно без подписки
     }
     search_resp = requests.get(url=SCOPUS_API_SEARCH_URL, params=search_query)
     search_resp.raise_for_status()
@@ -85,6 +89,7 @@ def collect_entry_data(entry) -> dict:
         "doi": entry.get("prism:doi", ""),
         "eid": entry.get("eid", ""),
         "subtypeDescription": entry.get("subtypeDescription", ""),
+        "creator": entry.get("dc:creator", ""),  # only first author
         "title": entry.get("dc:title", ""),
         "journal": entry.get("prism:publicationName", ""),
         "year": cover_year,
@@ -203,3 +208,42 @@ def sjr_parse_max_quartile(issn: str) -> str:
     if df is None:
         return "N/A"
     return df[df.year == df.year.max()].quart.min()
+
+
+def crossref_work(doi=''):
+    """Retrieve work by DOI with CrossRef API"""
+
+    resp = requests.get(url=urljoin(CROSSREF_WORKS_API, doi))
+    resp.raise_for_status()
+
+    return resp.json()
+
+def crossref_work_parse_authors(work_json):
+    assert work_json['status'] == 'ok', "No data"
+
+    if work_json['message'].get('author') is None:
+        return ""
+
+    return ", ".join([
+        f"{author_rec.get('family', '')} {author_rec.get('given', ' ')}"
+        for author_rec
+        in work_json['message']['author']
+    ])
+
+def crossref_work_parse_funders(work_json):
+    assert work_json['status'] == 'ok', "No data"
+
+    if work_json['message'].get('funder') is None:
+        return ""
+
+    funds = []
+    for funder_rec in work_json['message']['funder']:
+        awards = funder_rec.get('award', [])
+        awards_str = ""
+        if awards:
+            awards_str = ", ".join(awards)
+        funds.append(
+            f"{funder_rec.get('name', '')} {awards_str}"
+        )
+
+    return "; ".join(funds)

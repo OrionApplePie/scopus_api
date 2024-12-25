@@ -7,9 +7,9 @@ from environs import Env
 from tqdm import tqdm
 
 from utils import (collect_entry_data, fetch_query, find_next_link,
-                   format_article_string_std, get_quota_info,
-                   load_filter_phrases, parse_cite_score,
-                   parse_document_record, sjr_parse_max_quartile)
+                   get_quota_info, load_filter_phrases, parse_cite_score,
+                   sjr_parse_max_quartile, crossref_work,
+                   crossref_work_parse_authors, crossref_work_parse_funders)
 
 
 def main():
@@ -99,6 +99,9 @@ def main():
     if int(search_results["opensearch:totalResults"]) == 0:
         exit()
 
+    with open(f'resp_1.json', 'w') as f:
+        f.write(json.dumps(search_results, indent=4))
+
     data = []
     page_count = 1
     results_count = 0
@@ -115,7 +118,7 @@ def main():
             cite_score = parse_cite_score(issn, api_key)
             quartile = sjr_parse_max_quartile(issn)
 
-            doc_rec_data = parse_document_record(entry_data["doc_rec_link"])
+            # doc_rec_data = parse_document_record(entry_data["doc_rec_link"])
             # Пропускаем если не пустой фин. текст и нет ни одного попадания искомой фразы (при наличии таковых)
             # if (
             #         (
@@ -129,6 +132,13 @@ def main():
             cited_by_count = (
                 int(entry_data["citedby_count"]) if entry_data["citedby_count"] else 0
             )
+            try:
+                crossref_paper = crossref_work(entry_data["doi"])
+                authors_str = crossref_work_parse_authors(crossref_paper)
+                fund_info_str = crossref_work_parse_funders(crossref_paper)
+            except requests.exceptions.HTTPError as e:
+                authors_str = "N\A"
+                fund_info_str = "N\A"
             data.append(
                 [
                     entry_data["doc_rec_link"],
@@ -140,11 +150,11 @@ def main():
                     quartile,
                     entry_data["year"],
                     cited_by_count,
-                    format_article_string_std(entry_data, doc_rec_data["authors"]),
-                    ", ".join(doc_rec_data["authors"]),
+                    authors_str,
+                    # entry_data["creator"],
                     entry_data["title"],
                     entry_data["journal"],
-                    doc_rec_data["funding_text"],
+                    fund_info_str,
                 ]
             )
             results_count += 1
@@ -171,8 +181,9 @@ def main():
         "квартиль",
         "год",
         "кол-во цитирований",
-        "article full",
+        # "article full",
         "авторы",
+        # "первый автор",
         "название",
         "журнал",
         "текст о финансировании",
